@@ -6,11 +6,11 @@
         "php": ">=8.2",
         "ext-json": "*",
         "tinymvc/tinycore": "^4.0 || dev-main || @dev",
-        "react/http": "^1.9",
-        "ratchet/rfc6455": "^0.3"
+        "react/http": "^1.11",
+        "ratchet/rfc6455": "^0.4"
     },
     "require-dev": {
-        "pusher/pusher-php-server": "^7.2"
+        "shahinmoyshan/pusher-php-server": "^7.3 || dev-main || @dev"
     },
     "autoload": {
         "psr-4": {
@@ -23,7 +23,7 @@
         }
     },
     "scripts": {
-        "test": "@php test"
+        "test": "@php tests/run.php"
     },
     "authors": [
         {

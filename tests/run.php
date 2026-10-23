@@ -1,6 +1,6 @@
 <?php
 
-$autoload = __DIR__ . '/vendor/autoload.php';
+$autoload = dirname(__DIR__) . '/vendor/autoload.php';
 
 if (!is_file($autoload)) {
     fwrite(STDERR, "Run composer install before running tests.\n");
@@ -12,6 +12,6 @@ require $autoload;
 $_ENV['APP_ENV'] = 'testing';
 
 $runner = new \Spark\Testing\Runner();
-$result = $runner->run(__DIR__ . '/tests', array_slice($argv, 1));
+$result = $runner->run(__DIR__, array_slice($argv, 1));
 
 exit($result);

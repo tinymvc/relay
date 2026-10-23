@@ -2,6 +2,7 @@
 
 namespace Spark\Relay;
 
+use GuzzleHttp\Psr7\HttpFactory;
 use GuzzleHttp\Psr7\Message;
 use Psr\Http\Message\RequestInterface;
 use Ratchet\RFC6455\Handshake\RequestVerifier;
@@ -55,7 +56,7 @@ class Server
     ) {
         $this->loop ??= Loop::get();
         $prev = error_reporting(error_reporting() & ~E_DEPRECATED);
-        $this->negotiator = new ServerNegotiator(new RequestVerifier());
+        $this->negotiator = new ServerNegotiator(new RequestVerifier(), new HttpFactory());
 
         error_reporting($prev);
     }
