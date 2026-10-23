@@ -22,6 +22,12 @@
             "Tests\\": "tests/"
         }
     },
+    "suggest": {
+        "ext-uv": "Recommended for high-concurrency production deployments (removes the 1024 connection stream_select limit).",
+        "ext-ev": "Alternative high-performance loop backend using libev/epoll.",
+        "ext-event": "Alternative high-performance loop backend using libevent/epoll.",
+        "ext-pcntl": "Required on Linux/Unix for graceful POSIX process signal handling (SIGTERM, SIGINT)."
+    },
     "scripts": {
         "test": "@php tests/run.php"
     },

@@ -29,6 +29,7 @@ Browser ──POST /broadcasting/auth──────────────�
 * **Single Unified Process**: Serves both WebSocket connections (`/app/{key}`) and the Pusher REST HTTP API (`/apps/{id}/...`) simultaneously on a single event-driven port powered by ReactPHP.
 * **Pure In-Memory State**: Sockets, channel memberships, and presence rosters are tracked entirely in-memory with $O(1)$ channel lookups and efficient $O(\text{subscriptions})$ disconnect cleanups. Zero external database or Redis dependency required.
 * **Channel Support**: Full native support for **public**, **private** (`private-*`), and **presence** (`presence-*`) channels, along with client events / whispers (`client-*`).
+* **High-Concurrency Scaling (`ext-uv` / libuv)**: ReactPHP automatically detects and activates `ext-uv` (the same C event engine that powers Node.js) or `ext-ev`/`ext-event` to break past the 1,024 file descriptor limit of `stream_select()`, scaling effortlessly to tens of thousands of concurrent connections with zero code changes.
 * **Robust Daemon Reliability**: Includes activity heartbeats (`pusher:ping` / `pusher:pong`), pong timeout scanning, origin filtering, timing-safe HMAC-SHA256 signature verification, and memory threshold auto-guarding.
 
 ---
@@ -122,6 +123,50 @@ Example startup output:
   Apps:       [1]
   Event Loop: [React\EventLoop\StreamSelectLoop]
   Press Ctrl+C to stop the server.
+```
+
+---
+
+## Event Loop Backends & High-Concurrency Scaling (`ext-uv`)
+
+Relay is powered by **ReactPHP's unified Event Loop** (`React\EventLoop\Loop`). ReactPHP automatically inspects available PHP extensions at startup and selects the fastest, most scalable backend loop available on the system:
+
+| Loop Backend | Extension Required | Underlying Engine | Concurrent Limit | Recommended Use |
+| :--- | :--- | :--- | :--- | :--- |
+| `StreamSelectLoop` | *None* (PHP standard) | `stream_select()` | $\approx 1,024$ connections | Local development, testing, and small-to-medium apps. |
+| `ExtUvLoop` | [`ext-uv`](https://github.com/bwoebi/php-uv) | **libuv** (Node.js engine) | **Unlimited** ($10,000+$) | **Recommended for high-concurrency production.** |
+| `ExtEvLoop` | `ext-ev` | **libev** / epoll / kqueue | **Unlimited** ($10,000+$) | High-performance production alternative. |
+| `ExtEventLoop` | `ext-event` | **libevent** / epoll / kqueue | **Unlimited** ($10,000+$) | High-performance production alternative. |
+
+### Why `ext-uv` for Production?
+
+By default, without any compiled extensions, PHP relies on `StreamSelectLoop` via `stream_select()`. Operating systems cap `stream_select()` to `FD_SETSIZE` (typically 1,024 file descriptors). When your application approaches 1,000 simultaneous WebSocket connections, `stream_select()` can no longer monitor additional sockets.
+
+**The Fix:** Simply install the `ext-uv` PHP extension on your server.
+* **Zero Code Changes**: Relay uses `React\EventLoop\Loop::get()`, which prioritizes `ext-uv` as its top choice.
+* **Instant Scalability**: As soon as `ext-uv` is enabled in `php.ini`, Relay automatically switches from `StreamSelectLoop` to `ExtUvLoop`.
+* **Identical Application Behavior**: The extension only replaces the low-level I/O polling mechanism (`epoll` on Linux, `kqueue` on macOS/BSD, `IOCP` on Windows). Your application code, channel authorizers, and WebSocket event handlers remain standard PHP callbacks.
+
+Upon startup, `php spark relay:start` reports the active loop engine:
+
+```text
+  INFO   Relay WebSocket & HTTP API Server starting...
+  Address:    [http://0.0.0.0:8080]
+  Apps:       [1]
+  Event Loop: [React\EventLoop\ExtUvLoop]
+```
+
+### Installing `ext-uv` on Linux
+
+```bash
+# Ubuntu / Debian prerequisites
+sudo apt-get install libuv1-dev
+
+# Install via PECL
+sudo pecl install uv
+
+# Enable extension in php.ini
+echo "extension=uv.so" | sudo tee /etc/php/8.2/cli/conf.d/20-uv.ini
 ```
 
 ---
@@ -337,8 +382,10 @@ redirect_stderr=true
 stdout_logfile=/var/www/app/storage/logs/relay.log
 stopsignal=TERM
 stopwaitsecs=10
-minfds=10000
+minfds=65535
 ```
+
+> **Note on File Descriptors:** When handling thousands of concurrent connections with `ext-uv`, ensure your system limits allow it. Set `minfds=65535` in Supervisor and verify `ulimit -n` on your host.
 
 Reload supervisor:
 ```bash
