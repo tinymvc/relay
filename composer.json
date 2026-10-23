@@ -1,0 +1,34 @@
+{
+    "name": "tinymvc/relay",
+    "description": "A real-time relay for events, messages, and WebSocket broadcasts for TinyMVC / Spark framework.",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.2",
+        "ext-json": "*",
+        "tinymvc/tinycore": "^4.0 || dev-main || @dev",
+        "react/http": "^1.9",
+        "ratchet/rfc6455": "^0.3"
+    },
+    "require-dev": {
+        "pusher/pusher-php-server": "^7.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "Spark\\Relay\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "@php test"
+    },
+    "authors": [
+        {
+            "name": "Shahin Moyshan",
+            "email": "shahin.moyshan2@gmail.com"
+        }
+    ]
+}
