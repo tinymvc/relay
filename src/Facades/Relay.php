@@ -11,6 +11,7 @@ use Spark\Relay\Relay as BaseRelay;
  * @method static \Pusher\Pusher client()
  * @method static mixed trigger(array|string $channels, string $event, array|string $data, ?string $socketId = null)
  * @method static string authorize(string $channel, string $socketId, ?array $presence = null)
+ * @method static object stats()
  *
  * @package Spark\Relay\Facades
  */

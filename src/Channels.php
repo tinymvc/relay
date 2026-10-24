@@ -4,13 +4,15 @@ namespace Spark\Relay;
 
 use Throwable;
 use function array_keys;
-use function array_values;
 use function count;
 use function in_array;
 use function is_array;
+use function is_int;
+use function is_string;
 use function json_decode;
 use function json_encode;
 use function str_starts_with;
+use function strlen;
 
 class Channels
 {
@@ -33,6 +35,10 @@ class Channels
      */
     private array $subscriptions = [];
 
+    public function __construct(public readonly ChannelCache $cache = new ChannelCache())
+    {
+    }
+
     /**
      * Subscribe a connection to a channel.
      * Note: Server verifies private/presence signatures before calling this.
@@ -46,6 +52,40 @@ class Channels
         $appId = $connection->getApp()->appId;
         $socketId = $connection->getSocketId();
         $type = Protocol::channelType($channel);
+        $isAlreadySubscribed = $this->isSubscribed($appId, $channel, $socketId);
+
+        if (
+            !$isAlreadySubscribed
+            && count($this->subscriptions[$appId][$socketId] ?? []) >= $connection->getApp()->maxChannelsPerConnection
+        ) {
+            return false;
+        }
+
+        // Validate before mutating either registry, including on re-subscription.
+        if ($type === 'presence') {
+            $decoded = json_decode((string) $channelData, true);
+            $userId = is_array($decoded) ? ($decoded['user_id'] ?? null) : null;
+            if ((!is_string($userId) && !is_int($userId)) || (string) $userId === '') {
+                return false;
+            }
+
+            $userId = (string) $userId;
+            $userInfo = $decoded['user_info'] ?? null;
+
+            if (
+                $isAlreadySubscribed
+                && $this->channels[$appId][$channel]['socket_users'][$socketId] !== $userId
+            ) {
+                return false;
+            }
+
+            if (
+                !isset($this->channels[$appId][$channel]['users'][$userId])
+                && count($this->channels[$appId][$channel]['users'] ?? []) >= $connection->getApp()->maxPresenceMembers
+            ) {
+                return false;
+            }
+        }
 
         if (!isset($this->channels[$appId][$channel])) {
             $this->channels[$appId][$channel] = [
@@ -56,19 +96,10 @@ class Channels
             ];
         }
 
-        $isAlreadySubscribed = isset($this->channels[$appId][$channel]['connections'][$socketId]);
         $this->channels[$appId][$channel]['connections'][$socketId] = $connection;
         $this->subscriptions[$appId][$socketId][$channel] = true;
 
         if ($type === 'presence') {
-            $decoded = json_decode((string) $channelData, true);
-            if (!is_array($decoded) || !isset($decoded['user_id'])) {
-                return false;
-            }
-
-            $userId = (string) $decoded['user_id'];
-            $userInfo = $decoded['user_info'] ?? null;
-
             $this->channels[$appId][$channel]['socket_users'][$socketId] = $userId;
             $isFirstSocketForUser = !isset($this->channels[$appId][$channel]['users'][$userId]);
 
@@ -88,7 +119,7 @@ class Channels
             }
 
             // Reply subscription_succeeded with presence roster
-            $ids = array_keys($this->channels[$appId][$channel]['users']);
+            $ids = array_map('strval', array_keys($this->channels[$appId][$channel]['users']));
             $hash = [];
             foreach ($this->channels[$appId][$channel]['users'] as $uId => $userRecord) {
                 $hash[$uId] = $userRecord['info'];
@@ -101,6 +132,7 @@ class Channels
             ]);
 
             $connection->send($successFrame);
+            $this->sendCachedEvent($connection, $channel);
 
             return true;
         }
@@ -108,8 +140,17 @@ class Channels
         // Public or private channel
         $successFrame = Protocol::subscriptionSucceeded($channel);
         $connection->send($successFrame);
+        $this->sendCachedEvent($connection, $channel);
 
         return true;
+    }
+
+    private function sendCachedEvent(ConnectionInterface $connection, string $channel): void
+    {
+        if (Protocol::isCacheChannel($channel)) {
+            $connection->send($this->cache->get($connection->getApp()->appId, $channel)
+                ?? Protocol::frame('pusher:cache_miss', (object) [], $channel));
+        }
     }
 
     /**
@@ -129,6 +170,9 @@ class Channels
 
         if (empty($this->subscriptions[$appId][$socketId])) {
             unset($this->subscriptions[$appId][$socketId]);
+        }
+        if (empty($this->subscriptions[$appId])) {
+            unset($this->subscriptions[$appId]);
         }
 
         // Handle presence cleanup
@@ -192,12 +236,16 @@ class Channels
     ): void {
         $channels = (array) $channels;
 
-        foreach ($channels as $channel) {
-            if (!$this->occupied($app->appId, $channel)) {
+        foreach (array_unique($channels) as $channel) {
+            $cache = Protocol::isCacheChannel($channel);
+            if (!$cache && !$this->occupied($app->appId, $channel)) {
                 continue;
             }
 
             $frame = Protocol::frame($event, $data, $channel);
+            if ($cache) {
+                $this->cache->put($app, $channel, $frame);
+            }
             $this->publishRaw($app->appId, $channel, $frame, $exceptSocketId);
         }
     }
@@ -225,7 +273,12 @@ class Channels
             try {
                 $connection->send($rawFrame);
             } catch (Throwable) {
-                // Sockets that throw on write must not break delivery to peers
+                $this->disconnect($connection);
+                try {
+                    $connection->close(1011, 'Write failed');
+                } catch (Throwable) {
+                    // A failed transport must not interrupt delivery to its peers.
+                }
             }
         }
     }
@@ -241,7 +294,10 @@ class Channels
             return false;
         }
 
-        if (!Protocol::isClientEvent($event)) {
+        if (
+            !Protocol::isClientEvent($event) || !Protocol::validEventName($event)
+            || strlen($data) > Protocol::MAX_EVENT_DATA_SIZE || str_starts_with($channel, 'private-encrypted-')
+        ) {
             return false;
         }
 
@@ -269,7 +325,7 @@ class Channels
             if ($userId !== null) {
                 $frameData['user_id'] = $userId;
             }
-            $frame = json_encode($frameData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $frame = json_encode($frameData, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         } else {
             $frame = Protocol::frame($event, $data, $channel);
         }
@@ -347,6 +403,22 @@ class Channels
     public function connectionCount(string $appId): int
     {
         return count($this->subscriptions[$appId] ?? []);
+    }
+
+    public function statistics(string $appId): array
+    {
+        $subscriptions = 0;
+        $presenceChannels = 0;
+        foreach ($this->channels[$appId] ?? [] as $channel) {
+            $subscriptions += count($channel['connections']);
+            $presenceChannels += (int) ($channel['type'] === 'presence');
+        }
+        return [
+            'channels' => count($this->channels[$appId] ?? []),
+            'subscriptions' => $subscriptions,
+            'presence_channels' => $presenceChannels,
+            ...$this->cache->statistics($appId),
+        ];
     }
 
     public function isSubscribed(string $appId, string $channel, string $socketId): bool

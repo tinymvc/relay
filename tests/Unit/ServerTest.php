@@ -73,6 +73,21 @@ class ServerTest extends TestCase
         $this->assertTrue($ref->invoke($this->server, $wildcardApp, $mockReqMissing));
     }
 
+    public function testOriginsCannotHideAnUntrustedHostInUrlComponents(): void
+    {
+        $method = new \ReflectionMethod(Server::class, 'isOriginAllowed');
+        foreach ([
+            'https://evil.test/path.example.com',
+            'https://evil.test#sub.example.com',
+            'https://allowed.example.com@evil.test',
+            'ftp://sub.example.com',
+            'https://sub.example.com/path',
+        ] as $origin) {
+            $request = new \GuzzleHttp\Psr7\ServerRequest('GET', '/app/k1', ['Origin' => $origin]);
+            $this->assertFalse($method->invoke($this->server, $this->app, $request));
+        }
+    }
+
     public function testActivityScannerClosesOnPongTimeout(): void
     {
         // Simulate a connection that was pinged and hasn't responded within pong_timeout

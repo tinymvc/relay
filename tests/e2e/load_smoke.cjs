@@ -1,5 +1,5 @@
 const Pusher = require('pusher-js');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 async function runLoadSmoke() {
     console.log('--- Relay Load Smoke Test ---');
@@ -14,7 +14,7 @@ async function runLoadSmoke() {
     for (let i = 0; i < targetConnections; i++) {
         const client = new Pusher('e2e-key', {
             wsHost: '127.0.0.1',
-            wsPort: 8088,
+            wsPort: Number(process.env.RELAY_TEST_PORT || 8088),
             forceTLS: false,
             enabledTransports: ['ws'],
             disableStats: true,
@@ -44,8 +44,7 @@ async function runLoadSmoke() {
 
     for (let i = 0; i < targetMessages; i++) {
         const payload = JSON.stringify({ seq: i, time: Date.now() });
-        const cmd = `php "${__dirname}/e2e_sdk_helper.php" trigger load-test load-event "${payload.replace(/"/g, '\\"')}"`;
-        execSync(cmd);
+        execFileSync(process.env.PHP_BINARY || 'php', [__dirname + '/e2e_sdk_helper.php', 'trigger', 'load-test', 'load-event', payload], { timeout: 10000 });
     }
 
     const publishDuration = Date.now() - startPublish;
@@ -55,7 +54,7 @@ async function runLoadSmoke() {
     const expectedMessages = targetConnections * targetMessages;
     console.log(`Total messages received across all sockets: ${totalMessagesReceived} / ${expectedMessages}`);
 
-    if (totalMessagesReceived < expectedMessages * 0.99) {
+    if (totalMessagesReceived !== expectedMessages) {
         throw new Error(`Message loss detected! Expected ${expectedMessages}, got ${totalMessagesReceived}`);
     }
 

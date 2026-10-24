@@ -91,7 +91,7 @@ class ApiTest extends TestCase
         $query = $this->signRequest('POST', $path, ['body_md5' => md5($body)], $body);
 
         [$status, , $respBody] = $this->api->handle('POST', $path, $query, $body);
-        $this->assertEquals(400, $status);
+        $this->assertEquals(413, $status);
         $this->assertStringContainsString('exceeds maximum size limit', $respBody);
     }
 

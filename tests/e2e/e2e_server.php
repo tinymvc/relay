@@ -28,14 +28,16 @@ $server = new Server(
     api: $api,
     config: [
         'host' => '127.0.0.1',
-        'port' => 8088,
+        'port' => (int) (getenv('RELAY_TEST_PORT') ?: 8088),
         'activity_timeout' => 3,
         'pong_timeout' => 3,
-        'max_connections' => 0,
+        'max_connections' => 150,
+        'request_timeout' => 1,
         'memory_limit_mb' => 256,
+        'restart_file' => getenv('RELAY_TEST_RESTART_FILE') ?: null,
     ],
     loop: $loop,
-    debug: true
+    debug: false
 );
 
 $server->start();

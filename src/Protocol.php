@@ -2,7 +2,6 @@
 
 namespace Spark\Relay;
 
-use InvalidArgumentException;
 use function count;
 use function is_string;
 use function json_encode;
@@ -48,10 +47,10 @@ class Protocol
         if (is_string($data)) {
             $payload['data'] = $data;
         } else {
-            $payload['data'] = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $payload['data'] = json_encode($data, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         }
 
-        return json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        return json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
     public static function connectionEstablished(string $socketId, int $activityTimeout): string
@@ -124,7 +123,17 @@ class Protocol
             return false;
         }
 
-        return preg_match('/^[A-Za-z0-9_\-=@,.;]+$/', $name) === 1;
+        return preg_match('/\A[A-Za-z0-9_\-=@,.;]+\z/', $name) === 1;
+    }
+
+    public static function isCacheChannel(string $name): bool
+    {
+        foreach (['cache-', 'private-cache-', 'presence-cache-', 'private-encrypted-cache-'] as $prefix) {
+            if (str_starts_with($name, $prefix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static function channelType(string $name): string
@@ -142,7 +151,7 @@ class Protocol
 
     public static function validSocketId(string $socketId): bool
     {
-        return preg_match('/^\d+\.\d+$/', $socketId) === 1;
+        return preg_match('/\A[0-9]+\.[0-9]+\z/', $socketId) === 1;
     }
 
     public static function newSocketId(?callable $exists = null): string

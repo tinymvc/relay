@@ -15,11 +15,15 @@ use function str_starts_with;
 
 class Api
 {
+    public readonly Metrics $metrics;
+
     public function __construct(
         private readonly Channels $channels,
         /** @var array<string, App> */
-        private readonly array $apps
+        private readonly array $apps,
+        ?Metrics $metrics = null,
     ) {
+        $this->metrics = $metrics ?? new Metrics();
     }
 
     /**
@@ -62,12 +66,16 @@ class Api
             return $this->json(401, ['error' => $signError]);
         }
 
-        $queryArray = is_array($query) ? $query : [];
-        if (is_string($query)) {
-            parse_str($query, $queryArray);
-        }
+        $queryArray = Signature::parseQuery($query);
 
         // Route API endpoints
+        if ($method === 'GET' && $subPath === '/stats') {
+            return $this->json(200, [
+                ...$this->metrics->snapshot($app->appId),
+                ...$this->channels->statistics($app->appId),
+            ]);
+        }
+
         if ($method === 'POST' && $subPath === '/events') {
             return $this->postEvents($app, $rawBody);
         }
@@ -81,11 +89,11 @@ class Api
         }
 
         if ($method === 'GET' && preg_match('#^/channels/([^/]+)/users$#', $subPath, $chMatches)) {
-            return $this->getChannelUsers($app, $chMatches[1]);
+            return $this->getChannelUsers($app, rawurldecode($chMatches[1]));
         }
 
         if ($method === 'GET' && preg_match('#^/channels/([^/]+)$#', $subPath, $chMatches)) {
-            return $this->getChannelInfo($app, $chMatches[1], $queryArray);
+            return $this->getChannelInfo($app, rawurldecode($chMatches[1]), $queryArray);
         }
 
         return $this->json(404, ['error' => 'Endpoint not found']);
@@ -100,7 +108,8 @@ class Api
 
         $validationError = $this->validateEventItem($payload);
         if ($validationError !== null) {
-            return $this->json(400, ['error' => $validationError]);
+            $tooLarge = is_string($payload['data'] ?? null) && strlen($payload['data']) > Protocol::MAX_EVENT_DATA_SIZE;
+            return $this->json($tooLarge ? 413 : 400, ['error' => $validationError]);
         }
 
         $event = (string) $payload['name'];
@@ -116,7 +125,7 @@ class Api
     private function postBatchEvents(App $app, string $rawBody): array
     {
         $payload = json_decode($rawBody, true);
-        if (!is_array($payload) || !isset($payload['batch']) || !is_array($payload['batch'])) {
+        if (!is_array($payload) || !isset($payload['batch']) || !is_array($payload['batch']) || !array_is_list($payload['batch'])) {
             return $this->json(400, ['error' => 'Missing batch array']);
         }
 
@@ -131,13 +140,14 @@ class Api
                 return $this->json(400, ['error' => "Invalid batch item at index {$index}"]);
             }
 
-            if (!isset($item['channel']) || !is_string($item['channel'])) {
+            if (!isset($item['channel']) || !is_string($item['channel']) || array_key_exists('channels', $item)) {
                 return $this->json(400, ['error' => "Batch item at index {$index} must specify a single 'channel' string"]);
             }
 
             $validationError = $this->validateEventItem($item);
             if ($validationError !== null) {
-                return $this->json(400, ['error' => "Batch item {$index}: {$validationError}"]);
+                $tooLarge = is_string($item['data'] ?? null) && strlen($item['data']) > Protocol::MAX_EVENT_DATA_SIZE;
+                return $this->json($tooLarge ? 413 : 400, ['error' => "Batch item {$index}: {$validationError}"]);
             }
         }
 
@@ -156,7 +166,7 @@ class Api
 
     private function validateEventItem(array $item): ?string
     {
-        if (empty($item['name']) || !is_string($item['name'])) {
+        if (!isset($item['name']) || !is_string($item['name']) || $item['name'] === '') {
             return 'Missing or invalid event name';
         }
 
@@ -178,8 +188,11 @@ class Api
         }
 
         $channels = [];
+        if (array_key_exists('channel', $item) && array_key_exists('channels', $item)) {
+            return 'Specify either channel or channels, not both';
+        }
         if (isset($item['channels'])) {
-            if (!is_array($item['channels']) || count($item['channels']) === 0 || count($item['channels']) > Protocol::MAX_CHANNELS_PER_EVENT) {
+            if (!is_array($item['channels']) || !array_is_list($item['channels']) || count($item['channels']) === 0 || count($item['channels']) > Protocol::MAX_CHANNELS_PER_EVENT) {
                 return 'Channels must be an array of 1 to ' . Protocol::MAX_CHANNELS_PER_EVENT . ' channel names';
             }
             $channels = $item['channels'];
@@ -194,7 +207,7 @@ class Api
 
         foreach ($channels as $ch) {
             if (!is_string($ch) || !Protocol::validChannel($ch)) {
-                return "Invalid channel name '{$ch}'";
+                return 'Invalid channel name';
             }
         }
 
@@ -270,11 +283,12 @@ class Api
      */
     private function json(int $status, mixed $data): array
     {
-        $body = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $body = json_encode($data, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         return [
             $status,
             [
                 'Content-Type' => 'application/json',
+                'Cache-Control' => 'no-store',
                 'Content-Length' => (string) strlen($body),
             ],
             $body,

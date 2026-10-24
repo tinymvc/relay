@@ -6,19 +6,52 @@ use function abs;
 use function hash_equals;
 use function hash_hmac;
 use function implode;
-use function is_array;
-use function is_numeric;
+use function is_int;
 use function is_string;
 use function ksort;
 use function md5;
-use function parse_str;
-use function rawurldecode;
 use function strtolower;
 use function strtoupper;
 use function time;
 
 class Signature
 {
+    /**
+     * Decode query values exactly once and reject ambiguous or structured parameters.
+     * The same normalized parameters are used for signing and endpoint behavior.
+     */
+    public static function parseQuery(array|string $query): ?array
+    {
+        $pairs = [];
+        if (is_string($query)) {
+            foreach (explode('&', $query) as $pair) {
+                if ($pair === '') {
+                    continue;
+                }
+                [$key, $value] = array_pad(explode('=', $pair, 2), 2, '');
+                $pairs[] = [urldecode($key), urldecode($value)];
+            }
+        } else {
+            foreach ($query as $key => $value) {
+                $pairs[] = [$key, $value];
+            }
+        }
+
+        $params = [];
+        foreach ($pairs as [$key, $value]) {
+            $key = strtolower((string) $key);
+            if (
+                !preg_match('/\A[a-z0-9_]+\z/', $key)
+                || (!is_string($value) && !is_int($value)) || isset($params[$key])
+            ) {
+                return null;
+            }
+            $params[$key] = (string) $value;
+        }
+
+        return $params;
+    }
+
     /**
      * Compute channel auth string: "key:hmac".
      */
@@ -62,15 +95,9 @@ class Signature
         string $rawBody = '',
         int $now = 0
     ): ?string {
-        if (is_string($query)) {
-            parse_str($query, $parsedQuery);
-            $query = $parsedQuery;
-        }
-
-        // Lowercase query keys for uniform verification
-        $params = [];
-        foreach ($query as $k => $v) {
-            $params[strtolower((string) $k)] = is_string($v) ? rawurldecode($v) : $v;
+        $params = self::parseQuery($query);
+        if ($params === null) {
+            return 'Invalid query parameters';
         }
 
         // 1. Verify auth_key
@@ -81,7 +108,7 @@ class Signature
 
         // 2. Verify auth_timestamp
         $authTimestamp = $params['auth_timestamp'] ?? null;
-        if (!is_numeric($authTimestamp)) {
+        if (!is_string($authTimestamp) || !preg_match('/\A[0-9]{1,12}\z/', $authTimestamp)) {
             return 'Missing or invalid auth_timestamp';
         }
 
@@ -90,9 +117,13 @@ class Signature
             return 'Timestamp expired or skewed';
         }
 
+        if (($params['auth_version'] ?? null) !== '1.0') {
+            return 'Unsupported auth_version';
+        }
+
         // 3. For POST, verify body_md5
         $method = strtoupper($method);
-        if ($method === 'POST') {
+        if ($method === 'POST' || $rawBody !== '') {
             $bodyMd5 = $params['body_md5'] ?? null;
             if (!is_string($bodyMd5) || !hash_equals(md5($rawBody), $bodyMd5)) {
                 return 'Invalid body_md5';
@@ -110,9 +141,6 @@ class Signature
 
         $parts = [];
         foreach ($params as $k => $v) {
-            if (is_array($v)) {
-                $v = implode(',', $v);
-            }
             $parts[] = "{$k}={$v}";
         }
         $paramString = implode('&', $parts);

@@ -1,13 +1,14 @@
 {
   "name": "relay",
   "version": "1.0.0",
-  "description": "",
+  "description": "Relay real-client integration tests",
   "main": "index.js",
   "directories": {
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node tests/e2e/run.cjs",
+    "test:load": "node tests/e2e/run.cjs --load"
   },
   "repository": {
     "type": "git",
@@ -15,13 +16,14 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
   "bugs": {
     "url": "https://github.com/tinymvc/relay/issues"
   },
   "homepage": "https://github.com/tinymvc/relay#readme",
-  "dependencies": {
+  "private": true,
+  "devDependencies": {
     "pusher-js": "^8.6.0"
   }
 }

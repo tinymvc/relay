@@ -5,12 +5,11 @@
     "require": {
         "php": ">=8.2",
         "ext-json": "*",
-        "tinymvc/tinycore": "^4.0 || dev-main || @dev",
+        "tinymvc/tinycore": "^4.0 || dev-main",
         "react/http": "^1.11",
-        "ratchet/rfc6455": "^0.4"
-    },
-    "require-dev": {
-        "shahinmoyshan/pusher-php-server": "^7.3 || dev-main || @dev"
+        "ratchet/rfc6455": "^0.4",
+        "guzzlehttp/psr7": "^2.0",
+        "shahinmoyshan/pusher-php-server": "^7.3 || dev-main"
     },
     "autoload": {
         "psr-4": {

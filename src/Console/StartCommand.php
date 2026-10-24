@@ -8,6 +8,7 @@ use Spark\Relay\Api;
 use Spark\Relay\App;
 use Spark\Relay\Channels;
 use Spark\Relay\Server;
+use Spark\Relay\RestartSignal;
 use function array_keys;
 use function config;
 use function ctype_digit;
@@ -50,6 +51,7 @@ class StartCommand
 
         $serverConfig['host'] = $host;
         $serverConfig['port'] = $port;
+        $serverConfig['restart_file'] = RestartSignal::configuredPath();
 
         $channels = new Channels();
         $api = new Api($channels, $apps);

@@ -1,10 +1,8 @@
 const Pusher = require('pusher-js');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 function sdk(action, ...args) {
-    const escapedArgs = args.map(a => `"${(a || '').replace(/"/g, '\\"')}"`).join(' ');
-    const cmd = `php "${__dirname}/e2e_sdk_helper.php" ${action} ${escapedArgs}`;
-    const output = execSync(cmd).toString().trim();
+    const output = execFileSync(process.env.PHP_BINARY || 'php', [__dirname + '/e2e_sdk_helper.php', action, ...args], { timeout: 10000 }).toString().trim();
     try {
         return JSON.parse(output);
     } catch (e) {
@@ -15,7 +13,7 @@ function sdk(action, ...args) {
 function createClient(options = {}) {
     return new Pusher('e2e-key', {
         wsHost: '127.0.0.1',
-        wsPort: 8088,
+        wsPort: Number(process.env.RELAY_TEST_PORT || 8088),
         forceTLS: false,
         enabledTransports: ['ws'],
         disableStats: true,

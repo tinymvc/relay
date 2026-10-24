@@ -3,9 +3,12 @@
 namespace Spark\Relay;
 
 use Pusher\Pusher;
+use InvalidArgumentException;
 use RuntimeException;
 use function config;
 use function is_array;
+use function is_int;
+use function is_string;
 use function json_encode;
 
 class Relay
@@ -78,17 +81,35 @@ class Relay
      */
     public function authorize(string $channel, string $socketId, ?array $presence = null): string
     {
+        if (!Protocol::validChannel($channel) || !Protocol::validSocketId($socketId)) {
+            throw new InvalidArgumentException('Invalid Relay channel or socket ID.');
+        }
+
+        if (Protocol::channelType($channel) === 'presence' && $presence === null) {
+            throw new InvalidArgumentException('Presence authorization requires a user ID.');
+        }
+
         $customData = null;
         if ($presence !== null) {
-            $userId = (string) ($presence['id'] ?? $presence['user_id'] ?? '');
+            $userId = $presence['id'] ?? $presence['user_id'] ?? null;
+            if ((!is_string($userId) && !is_int($userId)) || (string) $userId === '') {
+                throw new InvalidArgumentException('Presence user ID must be a non-empty string or integer.');
+            }
+
             $userInfo = $presence['info'] ?? $presence['user_info'] ?? [];
             $customData = json_encode([
-                'user_id' => $userId,
+                'user_id' => (string) $userId,
                 'user_info' => $userInfo,
-            ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         }
 
         return $this->client()->authorizeChannel($channel, $socketId, $customData);
+    }
+
+    /** Fetch this app's process-local counters through the signed backend API. */
+    public function stats(): object
+    {
+        return $this->client()->get('/stats');
     }
 
     private function resolveApp(): App
@@ -102,8 +123,8 @@ class Relay
             throw new RuntimeException('No Relay applications configured in config/relay.php.');
         }
 
-        $first = reset($rawApps);
-        $this->app = App::fromConfig($first);
+        $apps = App::loadAll($rawApps);
+        $this->app = reset($apps);
 
         return $this->app;
     }

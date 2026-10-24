@@ -2,8 +2,8 @@
 
 namespace Spark\Relay;
 
-use function array_filter;
-use function is_string;
+use function array_slice;
+use function is_array;
 use function preg_match;
 use function preg_replace;
 
@@ -33,18 +33,18 @@ class ChannelAuth
      */
     public static function authorize(mixed $user, string $channel): array|bool
     {
+        if (!Protocol::validChannel($channel)) {
+            return false;
+        }
+
         foreach (self::$channels as $pattern => $callback) {
             $regex = self::patternToRegex($pattern);
 
             if (preg_match($regex, $channel, $matches)) {
-                $params = array_filter($matches, is_string(...), ARRAY_FILTER_USE_KEY);
+                $params = array_slice($matches, 1);
                 $result = $callback($user, ...$params);
 
-                if ($result === false || $result === null) {
-                    return false;
-                }
-
-                return $result;
+                return $result === true || is_array($result) ? $result : false;
             }
         }
 
@@ -58,13 +58,9 @@ class ChannelAuth
 
     private static function patternToRegex(string $pattern): string
     {
-        // Quote special characters except for {param}
-        $regex = preg_replace('/\{([a-zA-Z0-9_]+)\}/', '(?P<$1>[^.]+)', $pattern);
-        $regex = str_replace(['.', '-'], ['\.', '\-'], $regex);
+        $quoted = preg_quote($pattern, '#');
+        $regex = preg_replace('/\\\\\{[a-zA-Z_][a-zA-Z0-9_]*\\\\\}/', '([^.]+)', $quoted);
 
-        // Fix escaped brackets in named capture group
-        $regex = preg_replace('/\(\?P<([a-zA-Z0-9_]+)>\[\^\\\.\]\+\)/', '(?P<$1>[^.]+)', $regex);
-
-        return "#^{$regex}$#";
+        return "#\\A{$regex}\\z#";
     }
 }
