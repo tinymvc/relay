@@ -6,7 +6,8 @@
         "php": ">=8.2",
         "ext-json": "*",
         "tinymvc/tinycore": "^4.0 || dev-main",
-        "react/http": "^1.11",
+        "react/event-loop": "^1.2",
+        "react/socket": "^1.16",
         "ratchet/rfc6455": "^0.4",
         "guzzlehttp/psr7": "^2.0",
         "shahinmoyshan/pusher-php-server": "^7.3 || dev-main"
