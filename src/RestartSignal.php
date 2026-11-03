@@ -20,7 +20,7 @@ class RestartSignal
 
     public static function configuredPath(): string
     {
-        return (string) config('relay.server.restart_file', storage_dir() . 'relay.restart');
+        return (string) config('relay.server.restart_file', storage_dir('framework/relay.restart'));
     }
 
     public function requested(): bool
