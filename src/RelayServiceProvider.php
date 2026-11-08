@@ -27,6 +27,12 @@ class RelayServiceProvider extends ServiceProvider
 
             $commands->addCommand('relay:restart', RestartCommand::class)
                 ->description('Gracefully stop Relay for a supervised deployment restart');
+
+            // Publish the default configuration file for Relay
+            $this->publishes(
+                [__DIR__ . '/../config/relay.php' => root_dir('config/relay.php')],
+                'relay-config'
+            );
         }
     }
 }

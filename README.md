@@ -1,107 +1,187 @@
 # Relay for TinyMVC / Spark
 
-Relay brings realtime events, presence and live updates to TinyMVC / Spark applications. It runs on ReactPHP, uses TinyCore's native HTTP client for backend publishing through `shahinmoyshan/pusher-php-server`, and connects directly to browsers with `pusher-js`.
+Realtime events, presence and live updates for TinyMVC / Spark applications.
+
+Relay is a Pusher-compatible WebSocket server built on **ReactPHP**. Your backend publishes events through `shahinmoyshan/pusher-php-server` using TinyCore's native HTTP client, and browsers connect directly with **`pusher-js`**.
+
+> Relay implements the **Pusher Channels protocol, version 7**. Every browser example in this document uses `pusher-js` directly.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Quick Start](#quick-start)
+- [Broadcasting Events](#broadcasting-events)
+- [Private and Presence Channels](#private-and-presence-channels)
+- [Browser Client](#browser-client)
+- [Cache Channels](#cache-channels)
+- [Monitoring](#monitoring)
+- [Limits and Failure Handling](#limits-and-failure-handling)
+- [Deployment](#deployment)
+- [Testing](#testing)
+- [License](#license)
+
+---
 
 ## Features
 
 | Feature | What it provides |
 | --- | --- |
-| Public and private channels | Broadcast updates publicly or authorize access through your Spark application |
-| Presence channels | Track members with distinct user counts and multiple-tab support |
-| Event publishing | Publish single or batched events, target multiple channels, and exclude the originating socket |
-| Client events | Exchange events between authorized private/presence subscribers with per-connection rate limits |
-| Cache channels | Deliver the latest backend snapshot to new subscribers, with expiry and memory limits |
-| Channel queries | Inspect active channels, subscriptions and presence members through signed HTTP requests |
-| Multiple applications | Separate credentials, origins, channel state, limits and statistics per app |
-| Monitoring | Check daemon health and query signed connection, message and cache statistics |
-| Connection management | Heartbeats, bounded buffers, slow-consumer handling and graceful shutdown |
-| Spark integration | Relay facade, channel authorization rules, native HTTP transport and start/restart commands |
+| **Public and private channels** | Broadcast publicly, or authorize access through your Spark application |
+| **Presence channels** | Track members by distinct user, with multi-tab support |
+| **Event publishing** | Single or batched events, multiple target channels, and exclusion of the originating socket |
+| **Client events** | Events between authorized private/presence subscribers, with per-connection rate limits |
+| **Cache channels** | Deliver the latest backend snapshot to new subscribers, with expiry and memory limits |
+| **Channel queries** | Inspect active channels, subscriptions and presence members via signed HTTP requests |
+| **Multiple applications** | Separate credentials, origins, channel state, limits and statistics per app |
+| **Monitoring** | Daemon health check plus signed connection, message and cache statistics |
+| **Connection management** | Heartbeats, bounded buffers, slow-consumer handling and graceful shutdown |
+| **Spark integration** | `Relay` facade, channel authorization rules, native HTTP transport and start/restart commands |
 
-Relay uses the Pusher Channels protocol, version 7. All browser examples use `pusher-js` directly.
+---
 
-## Installation and registration
+## Requirements
+
+- PHP **8.2+**
+- PHP extensions: `json`, `curl`
+- Optional: `pcntl` (signal handling), and `uv` / `ev` / `event` (higher concurrency)
+
+---
+
+## Installation
 
 ```sh
 composer require tinymvc/relay
 ```
 
-PHP 8.2+, JSON and cURL are required. Composer installs the backend Pusher SDK as a runtime dependency, including with `--no-dev`.
+The backend Pusher SDK is installed automatically as a runtime dependency, including with `--no-dev`.
 
-Add `Spark\Relay\RelayServiceProvider::class` to the application's existing `bootstrap/providers.php` list. This registers the `Relay` facade service and `php spark relay:start` / `relay:restart` commands.
-
-Create `config/relay.php`:
+Register the service provider by adding it to your application's existing `bootstrap/providers.php`:
 
 ```php
-<?php
-
-return [
-    'server' => [
-        'host' => env('RELAY_SERVER_HOST', '127.0.0.1'),
-        'port' => (int) env('RELAY_SERVER_PORT', 8080),
-        'activity_timeout' => 30,
-        'pong_timeout' => 30,
-        'max_connections' => 500,
-        'max_pending_connections' => 128,
-        'request_timeout' => 10,
-        'max_header_size' => 16384,
-        'max_request_size' => 100000,
-        'max_outbound_buffer_size' => 1048576,
-        'memory_limit_mb' => 256,
-    ],
-    'apps' => [
-        [
-            'app_id' => env('RELAY_APP_ID', '1'),
-            'key' => env('RELAY_APP_KEY'),
-            'secret' => env('RELAY_APP_SECRET'),
-            'allowed_origins' => [env('RELAY_ALLOWED_ORIGIN', 'https://example.com')],
-            'client_events' => false,
-            'max_message_size' => 16384,
-            'max_connections' => 500,
-            'max_channels_per_connection' => 100,
-            'max_presence_members' => 100,
-            'client_event_rate' => 10,
-            'cache_ttl' => 1800,
-            'max_cached_channels' => 1000,
-            'max_cache_size' => 10485760,
-        ],
-    ],
-    'client' => [
-        'host' => env('RELAY_HOST', '127.0.0.1'),
-        'port' => (int) env('RELAY_PORT', 8080),
-        'scheme' => env('RELAY_SCHEME', 'http'),
-        'timeout' => 5,
-    ],
-];
+Spark\Relay\RelayServiceProvider::class,
 ```
 
-Set a unique key and a randomly generated secret; never include the secret in frontend builds. Set `RELAY_ALLOWED_ORIGIN` to the browser's actual origin, including scheme and nonstandard port. For development this might be `http://localhost:5173`. Missing credentials and duplicate app IDs/keys fail configuration loading.
+This registers the `Relay` facade service and the `php spark relay:start` / `relay:restart` commands.
 
-The facade uses the first configured app. For another app, inject an explicitly constructed `new Spark\Relay\Relay($app, $clientConfig)`.
+Publish the config file into your project:
 
-## Broadcasting
+```sh
+php spark vendor:publish --tag=relay-config
+```
+
+---
+
+## Configuration
+
+After publishing, edit the relay config and set:
+
+| Setting | Notes |
+| --- | --- |
+| **App key** | A unique key. Safe to expose to the browser. |
+| **App secret** | A randomly generated secret. **Never include it in frontend builds.** |
+| `RELAY_ALLOWED_ORIGIN` | The browser's actual origin, including scheme and any nonstandard port (e.g. `http://localhost:5173` in development). |
+
+Configuration loading fails if credentials are missing or if app IDs/keys are duplicated.
+
+The `Relay` facade always uses the **first configured app**. To use a different one, construct it explicitly:
+
+```php
+$relay = new Spark\Relay\Relay($app, $clientConfig);
+```
+
+---
+
+## Quick Start
+
+**1. Start the daemon**
+
+```sh
+php spark relay:start --host=127.0.0.1 --port=8080
+```
+
+**2. Publish an event from your backend**
 
 ```php
 use Spark\Relay\Facades\Relay;
 
 Relay::trigger('orders', 'order.created', ['id' => $order->id]);
+```
+
+**3. Listen in the browser**
+
+```js
+import Pusher from 'pusher-js';
+
+const pusher = new Pusher(import.meta.env.VITE_RELAY_APP_KEY, {
+    cluster: 'mt1',
+    wsHost: window.location.hostname,
+    wsPort: 8080,
+    forceTLS: false,
+    enabledTransports: ['ws'],
+    disableStats: true,
+});
+
+pusher.subscribe('orders').bind('order.created', data => console.log(data));
+```
+
+> This is the direct local-development setup. For production, see [Browser Client](#browser-client) and [Deployment](#deployment).
+
+---
+
+## Broadcasting Events
+
+```php
+use Spark\Relay\Facades\Relay;
+
+// Public channel
+Relay::trigger('orders', 'order.created', ['id' => $order->id]);
+
+// Private channel, excluding the originating socket
 Relay::trigger('private-chat.42', 'message.sent', ['text' => $message->text], $socketId);
 ```
 
-Pass an array for structured event data. Strings are JSON-encoded by the SDK in the normal Pusher manner. For already-encoded JSON, use the explicit SDK option: `Relay::client()->trigger($channels, $event, $json, [], true)`.
+**Payloads**
 
-For asynchronous application work, dispatch a Spark job implementing `Spark\Queue\Contracts\JobInterface` with `Spark\Queue\Dispatchable`, and call Relay in `handle()`. SDK methods ending in `Async` prepare TinyCore HTTP requests; they do not schedule jobs or send requests by themselves. Do not execute synchronous publishing or `HttpPool` inside Relay's event-loop callbacks.
+- Pass an **array** for structured event data.
+- Strings are JSON-encoded by the SDK in the normal Pusher manner.
+- For already-encoded JSON, use the explicit SDK option:
 
-## Private and presence authorization
+```php
+Relay::client()->trigger($channels, $event, $json, [], true);
+```
 
-Your Spark application authenticates users and authorizes channel access; Relay verifies the signed subscriptions. Define channel rules in a provider's `boot()` method, or explicitly load a `routes/channels.php` file from that provider:
+**Asynchronous work**
+
+To publish outside the request cycle, dispatch a Spark job that implements `Spark\Queue\Contracts\JobInterface` and uses `Spark\Queue\Dispatchable`, then call Relay inside `handle()`.
+
+> **Note**
+> SDK methods ending in `Async` only *prepare* TinyCore HTTP requests; they do not schedule jobs or send anything themselves.
+> Never run synchronous publishing or `HttpPool` inside Relay's event-loop callbacks.
+
+---
+
+## Private and Presence Channels
+
+Your Spark application authenticates users and authorizes channel access. Relay verifies the signed subscriptions.
+
+### 1. Define channel rules
+
+Define rules in a provider's `boot()` method, or load a `routes/channels.php` file explicitly from that provider.
 
 ```php
 use Spark\Relay\ChannelAuth;
 
+// Private channel: return true to allow, false to deny
 ChannelAuth::define('private-chat.{conversationId}', function ($user, $id) {
     return $user && $user->canAccessConversation($id);
 });
 
+// Presence channel: return member data to allow, false to deny
 ChannelAuth::define('presence-workspace.{workspaceId}', function ($user, $id) {
     if (!$user || !$user->belongsToWorkspace($id)) {
         return false;
@@ -111,9 +191,16 @@ ChannelAuth::define('presence-workspace.{workspaceId}', function ($user, $id) {
 });
 ```
 
-Patterns match literally except for `{parameter}` placeholders. Callback arguments are positional. Return `true` for private authorization, a presence array for presence authorization, or `false` to deny. Unknown patterns deny access.
+**Rule behavior**
 
-Example controller action, registered as a POST `/broadcasting/auth` route under the application's authentication and CSRF middleware:
+- Patterns match literally, except for `{parameter}` placeholders.
+- Callback arguments are positional.
+- Return `true` for private authorization, a presence array for presence authorization, or `false` to deny.
+- **Unknown patterns are denied.**
+
+### 2. Add the authorization endpoint
+
+Register a `POST /broadcasting/auth` route under your application's authentication and CSRF middleware:
 
 ```php
 use Spark\Http\Request;
@@ -149,13 +236,34 @@ public function authenticate(Request $request): Response
 }
 ```
 
-Presence IDs must be non-empty strings or integers; zero is valid. Presence is counted by distinct user, with multiple tabs tracked separately. Re-subscribing the same socket cannot change its identity; unsubscribe first. Authorization is checked at subscription time, so application access changes need an explicit disconnection policy or short-lived connections.
+### Presence rules
 
-## Browser client
+- Presence IDs must be non-empty strings or integers (`0` is valid).
+- Members are counted by **distinct user**; multiple tabs are tracked separately.
+- Re-subscribing the same socket cannot change its identity. Unsubscribe first.
+
+> **Warning**
+> Authorization is checked **at subscription time only**. If a user's access changes, you need an explicit disconnection policy or short-lived connections.
+
+### Client events
+
+Client events (whispers) require all of the following:
+
+- `client_events: true` in the app config
+- Membership in a private or presence channel
+- An event name with the `client-` prefix, and valid name/size
+
+Treat client event contents as **untrusted** in the receiving application. Excess events per socket receive error code `4301`.
+
+---
+
+## Browser Client
 
 ```sh
 npm install pusher-js
 ```
+
+Production setup behind a same-origin reverse proxy:
 
 ```js
 import Pusher from 'pusher-js';
@@ -177,20 +285,35 @@ const pusher = new Pusher(import.meta.env.VITE_RELAY_APP_KEY, {
 });
 
 pusher.subscribe('orders').bind('order.created', data => console.log(data));
+
 pusher.subscribe('presence-workspace.42').bind('pusher:subscription_succeeded', members => {
     console.log(members.count);
 });
 ```
 
-This example connects through the same-origin reverse proxy. For direct local development, set `wsHost`, `wsPort: 8080`, and `forceTLS: false` appropriately.
+For direct local development (no proxy), set `wsHost`, `wsPort: 8080` and `forceTLS: false` accordingly.
 
-## Cache channels for initial state
+---
 
-Use `cache-`, `private-cache-`, `presence-cache-` or `private-encrypted-cache-` prefixes. Private and presence authorization works exactly as for ordinary channels. Publish full state snapshots when using this feature:
+## Cache Channels
+
+Cache channels deliver the **latest backend-published event** to each new subscriber, so clients get initial state without a separate request.
+
+Use one of these prefixes:
+
+`cache-` · `private-cache-` · `presence-cache-` · `private-encrypted-cache-`
+
+Private and presence authorization works exactly as it does for ordinary channels. Publish **full state snapshots** when using this feature.
+
+**Backend**
 
 ```php
 Relay::trigger('private-cache-order.42', 'order.state', ['id' => 42, 'status' => 'shipped']);
 ```
+
+Register a matching rule, such as `private-cache-order.{id}`, that checks access to the order.
+
+**Browser**
 
 ```js
 const order = pusher.subscribe('private-cache-order.42');
@@ -201,59 +324,119 @@ order.bind('pusher:cache_miss', async () => {
 });
 ```
 
-Register a matching `ChannelAuth` rule for `private-cache-order.{id}` which checks access to the order. Bind handlers immediately after subscribing. Relay sends subscription success before the cached event, or `pusher:cache_miss` when no value remains. Include a version in application snapshots if a fallback HTTP response can race a newer WebSocket update.
+Bind handlers immediately after subscribing. Relay sends subscription success first, then either the cached event or `pusher:cache_miss`.
 
-Only backend-published events populate the cache; client events and presence notifications never replace it. Events published with no subscribers are retained, and disconnecting the final subscriber does not delete the cached value. The latest publish replaces the previous value regardless of event name. A socket excluded from the live broadcast can still receive that value on a later subscription.
+> **Tip**
+> Include a version in your snapshots if the fallback HTTP response could race a newer WebSocket update.
 
-The cache is isolated per app and defaults to 30-minute expiry, 1,000 channel entries and 10 MiB of encoded frames. Oldest published entries are evicted first when either budget is reached. An individual frame exceeding the byte budget is delivered live and replaces any older cached value with a cache miss. Expired entries are reclaimed on access and by the daemon's five-second maintenance scan. Cache data lives in daemon memory and resets on restart. Channel queries report currently occupied channels.
+### Cache behavior
+
+- Only **backend-published** events populate the cache. Client events and presence notifications never replace it.
+- The **latest publish replaces** the previous value, regardless of event name.
+- Events published with no subscribers are retained, and disconnecting the last subscriber does not delete the cached value.
+- A socket excluded from the live broadcast can still receive the value on a later subscription.
+- A single frame larger than the byte budget is delivered live and replaces any older cached value with a cache miss.
+- Entries are evicted oldest-published first when either budget is reached.
+- Expired entries are reclaimed on access and by the daemon's five-second maintenance scan.
+- The cache is isolated per app, lives in daemon memory, and **resets on restart**.
+- Channel queries report currently occupied channels only.
+
+Defaults: 30-minute expiry, 1,000 channel entries, 10 MiB of encoded frames.
+
+---
 
 ## Monitoring
 
-`GET /health` responds with `{"status":"ok"}` while the daemon's HTTP/event loop is responsive. It exposes no app identities or counters. Keep this endpoint on the internal monitoring network; a process supervisor remains responsible for recovery.
+### Health check
+
+```
+GET /health  →  {"status":"ok"}
+```
+
+Returns OK while the daemon's HTTP/event loop is responsive. It exposes no app identities or counters. Keep it on the internal monitoring network. A process supervisor remains responsible for recovery.
+
+### Statistics
 
 ```php
-$stats = Relay::stats(); // Signed GET /apps/{app_id}/stats via TinyCore HTTP.
+$stats = Relay::stats(); // Signed GET /apps/{app_id}/stats via TinyCore HTTP
 echo $stats->connections;
 echo $stats->messages_sent;
 
-// The native Pusher client can query the same Relay-specific endpoint:
+// Equivalent, using the native Pusher client:
 $stats = Relay::client()->get('/stats');
 ```
 
-Statistics require the app's ordinary HTTP signature and report only that app's current `connections`, `channels`, `subscriptions`, `presence_channels`, `cached_channels` and `cache_bytes`. Connections include sockets with no subscriptions. `connections_total`, `messages_received`, `messages_sent`, `bytes_received` and `bytes_sent` are cumulative since this daemon started; `uptime_seconds` uses a monotonic clock.
+Requests need the app's ordinary HTTP signature and report only that app's data.
 
-Message counters include complete WebSocket text messages and Pusher protocol events. Sent counts mean queued to the transport, not acknowledged delivery; byte counts exclude WebSocket/HTTP/TLS framing. HTTP requests, ping/pong control frames, partial messages and rejected handshakes are not counted. Counters reset on restart. Poll this endpoint from a backend monitoring job, not from browsers; never expose app secrets. External monitoring must retain history and alert on disconnects or publishing failures.
+| Type | Fields |
+| --- | --- |
+| **Current** | `connections`, `channels`, `subscriptions`, `presence_channels`, `cached_channels`, `cache_bytes` |
+| **Cumulative since daemon start** | `connections_total`, `messages_received`, `messages_sent`, `bytes_received`, `bytes_sent` |
+| **Uptime** | `uptime_seconds` (monotonic clock) |
 
-## Limits and failure handling
+**Counting rules**
 
-Limits are bytes unless stated otherwise. Configured limits should match the host's capacity; zero only disables `max_connections` or the memory guard.
+- `connections` includes sockets with no subscriptions.
+- Message counters include complete WebSocket text messages and Pusher protocol events.
+- "Sent" means *queued to the transport*, not acknowledged delivery.
+- Byte counts exclude WebSocket, HTTP and TLS framing.
+- Not counted: HTTP requests, ping/pong control frames, partial messages and rejected handshakes.
+- All counters reset on restart.
 
-| Setting | Default when omitted | Behavior |
+> **Warning**
+> Poll statistics from a backend monitoring job, never from browsers, and never expose app secrets. External monitoring must retain history and alert on disconnects or publishing failures.
+
+---
+
+## Limits and Failure Handling
+
+Limits are in **bytes** unless stated otherwise. Match them to your host's capacity. A value of `0` only disables `max_connections` or the memory guard.
+
+| Setting | Default | Behavior |
 | --- | --- | --- |
-| Server `max_connections` | 0 | Total established WebSockets; set a finite production limit |
-| App `max_connections` | 0 | Established sockets for this app, including unsubscribed sockets |
-| `max_pending_connections` | 128 | Bounds HTTP requests and incomplete/rejected handshakes |
-| `request_timeout` | 10 seconds | Absolute deadline for headers/body and HTTP response closure |
-| `max_header_size` | 16,384 | Rejects oversized HTTP headers with 431 |
-| `max_request_size` | 100,000 | Rejects oversized request bodies with 413, before `100 Continue` |
-| `max_outbound_buffer_size` | 1,048,576 | Disconnects slow consumers when queued output exceeds the bound |
-| App `max_message_size` | 10,000 | Complete inbound WebSocket message, including JSON envelope; checked while buffering |
-| App `max_channels_per_connection` | 100 | Bounds each socket's subscriptions |
-| App `max_presence_members` | 100 | Distinct users in each presence channel; extra tabs remain allowed |
-| App `client_event_rate` | 10/second | Token bucket per socket, with a burst of 10 by default; excess events receive 4301 |
-| App `cache_ttl` | 1,800 seconds | Maximum age of a retained cache-channel event |
-| App `max_cached_channels` | 1,000 | Maximum retained cache-channel entries, including unoccupied channels |
-| App `max_cache_size` | 10,485,760 | Maximum bytes of encoded cached frames per app; entry limit bounds metadata separately |
-| `activity_timeout` / `pong_timeout` | 30 / 30 seconds | Heartbeats scanned every five seconds |
-| `memory_limit_mb` | 256 MiB | Checks allocated PHP memory every 30 seconds and stops for supervisor restart |
+| Server `max_connections` | `0` | Total established WebSockets. **Set a finite production limit.** |
+| App `max_connections` | `0` | Established sockets for this app, including unsubscribed ones |
+| `max_pending_connections` | `128` | Bounds HTTP requests and incomplete/rejected handshakes |
+| `request_timeout` | `10` s | Absolute deadline for headers/body and HTTP response closure |
+| `max_header_size` | `16,384` | Oversized HTTP headers are rejected with `431` |
+| `max_request_size` | `100,000` | Oversized bodies are rejected with `413`, before `100 Continue` |
+| `max_outbound_buffer_size` | `1,048,576` | Slow consumers are disconnected when queued output exceeds this |
+| App `max_message_size` | `10,000` | Complete inbound WebSocket message including JSON envelope; checked while buffering |
+| App `max_channels_per_connection` | `100` | Subscriptions per socket |
+| App `max_presence_members` | `100` | Distinct users per presence channel (extra tabs remain allowed) |
+| App `client_event_rate` | `10`/s | Per-socket token bucket, burst of 10; excess events receive `4301` |
+| App `cache_ttl` | `1,800` s | Maximum age of a retained cache-channel event |
+| App `max_cached_channels` | `1,000` | Retained cache entries, including unoccupied channels |
+| App `max_cache_size` | `10,485,760` | Bytes of encoded cached frames per app (entry limit bounds metadata separately) |
+| `activity_timeout` / `pong_timeout` | `30` / `30` s | Heartbeats, scanned every five seconds |
+| `memory_limit_mb` | `256` | Checks allocated PHP memory every 30 s and exits so the supervisor can restart |
 
-Event data is limited to 10,240 bytes; HTTP events may target at most 100 channels and batches at most 10 events. Increase `max_request_size` if sending batches near these limits, allowing for JSON escaping. Fragmented WebSocket messages are also capped at 1,024 fragments, including empty fragments.
+### Publishing limits
 
-The HTTP API accepts one Content-Length-framed request per connection, then closes it. Chunked request bodies and ambiguous lengths are rejected. The bundled PHP client sends Content-Length. Failed batch validation publishes nothing. Signature timestamps allow at most 600 seconds of skew; synchronize server clocks. Signed URLs may be replayed during that window: publishing is not idempotent.
+- Event data: **10,240 bytes** max
+- Channels per HTTP event: **100** max
+- Events per batch: **10** max
+- Fragmented WebSocket messages: **1,024 fragments** max, including empty ones
 
-Client events require `client_events: true`, membership in a private/presence channel, a `client-` prefix and valid size/name. Treat client event contents as untrusted in the receiving application. Debug mode records socket IDs, sizes and close reasons, without event bodies or authorization tokens.
+If you send batches near these limits, increase `max_request_size` to allow for JSON escaping.
+
+### HTTP API behavior
+
+- One `Content-Length`-framed request per connection, then the connection closes.
+- Chunked bodies and ambiguous lengths are rejected. The bundled PHP client always sends `Content-Length`.
+- A failed batch validation publishes **nothing**.
+- Signature timestamps allow up to **600 seconds** of clock skew, so keep server clocks synchronized.
+- Signed URLs can be replayed during that window, and publishing is **not idempotent**.
+
+### Debug mode
+
+Debug mode records socket IDs, sizes and close reasons. It never records event bodies or authorization tokens.
+
+---
 
 ## Deployment
+
+### Commands
 
 ```sh
 php spark relay:start --host=127.0.0.1 --port=8080
@@ -261,11 +444,17 @@ php spark relay:start --debug
 php spark relay:restart
 ```
 
-Run one daemon for an app's traffic and route both its WebSocket connections and backend HTTP publishing to that daemon. Channel and cache state live in its memory. Persist application records in your database and refresh client state after reconnecting to keep views synchronized across deployments and network interruptions.
+### Architecture
 
-Terminate TLS at Nginx or another reverse proxy. Bind the daemon to loopback or a protected network. Expose `/app/` to browsers and keep `/apps/` private for backend publishing. Apply connection/request rate limits at the proxy, including handshake traffic.
+- Run **one daemon per app's traffic**. Route both its WebSocket connections and backend HTTP publishing to that daemon.
+- Channel and cache state live in daemon memory. Persist application records in your database, and refresh client state after reconnects so views stay in sync across deployments and network interruptions.
+- Terminate TLS at Nginx (or another reverse proxy) and bind the daemon to loopback or a protected network.
+- Expose `/app/` to browsers; keep `/apps/` **private** for backend publishing.
+- Apply connection and request rate limits at the proxy, including handshake traffic.
 
-Inside an HTTPS virtual host:
+### Nginx
+
+Inside your HTTPS virtual host:
 
 ```nginx
 location /app/ {
@@ -280,7 +469,9 @@ location /app/ {
 }
 ```
 
-Run under a process supervisor with restart enabled, because the memory guard deliberately exits:
+### Supervisor
+
+Run Relay under a process supervisor with restart enabled. The memory guard exits deliberately and relies on this.
 
 ```ini
 [program:relay]
@@ -295,15 +486,50 @@ redirect_stderr=true
 stdout_logfile=/var/www/app/storage/logs/relay.log
 ```
 
-`SIGTERM`/`SIGINT` close clients with reconnect code 4200, close pending HTTP sockets, and allow two seconds for close frames before forcibly releasing streams. Enable `pcntl` for signal handling. Configure file descriptor limits in the supervisor's global configuration and OS limits, not inside the program section.
+Configure file descriptor limits in the supervisor's **global** configuration and OS limits, not inside the program section.
 
-`relay:restart` writes an atomic local marker. The daemon checks it every second, closes clients with code 4200 and exits successfully; Supervisor's `autorestart=true` then starts the replacement. Confirm the replacement is running through `/health` and the supervisor after deployment. The marker mechanism works independently of `pcntl`.
+### Graceful shutdown
 
-By default, CLI-started daemons use `storage_dir() . 'relay.restart'`. Run the restart command as the same OS user as the daemon. Keep the marker outside the public directory and on local storage shared across releases. For symlink-based deployments, explicitly set server `restart_file` to a stable absolute path such as `/var/www/shared/storage/relay.restart` in both old and new releases. Newly started daemons take the existing marker as their baseline, so they do not enter a restart loop. Programmatically constructed `Server` instances must set `restart_file` to enable polling. Use different paths for independently managed daemon groups; one marker deliberately restarts every process watching it.
+`SIGTERM` / `SIGINT` close clients with reconnect code `4200`, close pending HTTP sockets, and allow two seconds for close frames before forcibly releasing streams. Enable `pcntl` for signal handling.
 
-ReactPHP uses the available event-loop backend. `StreamSelectLoop` has platform-dependent descriptor limits, commonly around 1,024 descriptors for the process. Install an appropriate `uv`, `ev` or `event` extension for higher concurrency, then benchmark on the deployment host to set connection limits. Monitor process restarts, memory, connection counts at the proxy, reconnect rates and publishing failures.
+### Restarting after a deploy
 
-## Verification
+`relay:restart` writes an atomic local marker. The daemon checks it every second, closes clients with code `4200` and exits successfully, and Supervisor's `autorestart=true` starts the replacement.
+
+After deploying, confirm the replacement is running via `/health` and your supervisor.
+
+**Restart marker rules**
+
+- Default location for CLI-started daemons: `storage_dir() . 'relay.restart'`.
+- Run `relay:restart` as the **same OS user** as the daemon.
+- Keep the marker outside the public directory, on local storage shared across releases.
+- For symlink-based deployments, set server `restart_file` to a stable absolute path in both old and new releases, for example `/var/www/shared/storage/relay.restart`.
+- Newly started daemons use the existing marker as their baseline, so they do not enter a restart loop.
+- Programmatically constructed `Server` instances must set `restart_file` to enable polling.
+- Use different paths for independently managed daemon groups. One marker deliberately restarts **every** process watching it.
+- The marker mechanism works without `pcntl`.
+
+### Event loop and capacity
+
+ReactPHP uses the best available event-loop backend. `StreamSelectLoop` has platform-dependent descriptor limits, commonly around 1,024 per process. Install an appropriate `uv`, `ev` or `event` extension for higher concurrency, then benchmark on your deployment host to choose connection limits.
+
+Monitor process restarts, memory, proxy connection counts, reconnect rates and publishing failures.
+
+### Production checklist
+
+- [ ] Unique app key and random secret; secret never shipped to the browser
+- [ ] `RELAY_ALLOWED_ORIGIN` matches the real browser origin
+- [ ] Finite server and per-app `max_connections`
+- [ ] TLS terminated at the proxy; daemon bound to loopback or a private network
+- [ ] `/apps/` and `/health` not publicly reachable
+- [ ] Supervisor with `autorestart=true`
+- [ ] Rate limits configured at the proxy
+- [ ] Server clocks synchronized
+- [ ] Monitoring and alerting on disconnects and publishing failures
+
+---
+
+## Testing
 
 ```sh
 composer install
@@ -313,18 +539,34 @@ npm test
 npm run test:load
 ```
 
-The JavaScript runner starts an isolated localhost daemon on a temporary port, times out failures and shuts it down. The suites cover real `pusher-js` connections plus PHP SDK publishing/authentication, presence tabs, whispers, batch/query APIs, cache replay/misses, signed statistics, health checks, deployment restart, raw TCP framing, memory bounds and cleanup. Unit tests also verify cache expiry, eviction, app isolation and authorization before replay. The load smoke sends 50 events to 100 connections and requires all 5,000 deliveries; it is not a sustained production capacity benchmark.
+The JavaScript runner starts an isolated localhost daemon on a temporary port, times out failures, and shuts the daemon down afterward.
 
-To test a sibling SDK checkout instead of the installed SDK:
+**Coverage**
+
+- Real `pusher-js` connections and PHP SDK publishing/authentication
+- Presence tabs, whispers, batch/query APIs
+- Cache replay and misses, signed statistics, health checks
+- Deployment restart, raw TCP framing, memory bounds and cleanup
+- Unit tests for cache expiry, eviction, app isolation, and authorization before replay
+
+The load smoke test sends 50 events to 100 connections and requires all 5,000 deliveries. It is **not** a sustained production capacity benchmark.
+
+**Testing against a sibling SDK checkout**
 
 ```sh
 RELAY_PUSHER_SOURCE=../pusher-php-server npm run test:load
 ```
 
-Release the reviewed SDK and Relay changes together. Applications should deploy their Composer lockfile and verify their own TLS, proxy, authorization rules and workload on staging.
+Release reviewed SDK and Relay changes together. Deploy your Composer lockfile, and verify your own TLS, proxy, authorization rules and workload on staging.
+
+---
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
 
-Protocol references: [Pusher WebSocket protocol](https://pusher.com/docs/channels/library_auth_reference/pusher-websockets-protocol/), [Pusher HTTP API](https://pusher.com/docs/channels/library_auth_reference/rest-api/), and [ReactPHP](https://reactphp.org/).
+## References
+
+- [Pusher WebSocket protocol](https://pusher.com/docs/channels/library_auth_reference/pusher-websockets-protocol/)
+- [Pusher HTTP API](https://pusher.com/docs/channels/library_auth_reference/rest-api/)
+- [ReactPHP](https://reactphp.org/)
