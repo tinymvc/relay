@@ -60,14 +60,6 @@ composer require tinymvc/relay
 
 The backend Pusher SDK is installed automatically as a runtime dependency, including with `--no-dev`.
 
-Register the service provider by adding it to your application's existing `bootstrap/providers.php`:
-
-```php
-Spark\Relay\RelayServiceProvider::class,
-```
-
-This registers the `Relay` facade service and the `php spark relay:start` / `relay:restart` commands.
-
 Publish the config file into your project:
 
 ```sh

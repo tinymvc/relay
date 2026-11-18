@@ -36,5 +36,12 @@
             "name": "Shahin Moyshan",
             "email": "shahin.moyshan2@gmail.com"
         }
-    ]
+    ],
+    "extra": {
+        "spark": {
+            "providers": [
+                "Spark\\Relay\\RelayServiceProvider"
+            ]
+        }
+    }
 }
